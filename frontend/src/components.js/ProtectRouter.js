@@ -3,14 +3,20 @@ import { Navigate } from 'react-router-dom';
 import { AuthContext } from '../context/authcontext';
 
 const ProtectRouter = ({ children, allowedRoles }) => {
-    const { user } = useContext(AuthContext);
+    const { user, loading } = useContext(AuthContext);
 
-    if (!user) {
-        return <Navigate to="/auth/login" replace />;
-    }
+    if (loading) return <div>Loading System...</div>;
 
-    if (allowedRoles && !allowedRoles.includes(user.role)) {
-        return <Navigate to="/" replace />;
+    // Niba atari logged in, mujyane kuri login
+    if (!user) return <Navigate to="/auth/login" replace />;
+
+    // Reba niba role ihuje (ukoresheje toLowerCase kwirinda ikosa)
+    const userRole = user.role?.toLowerCase();
+    const isAllowed = allowedRoles.map(r => r.toLowerCase()).includes(userRole);
+
+    if (!isAllowed) {
+        // Niba afite konti ariko atemerewe aha, mwereke Dashboard ye
+        return <Navigate to={`/${userRole}/dashboard`} replace />;
     }
 
     return children;

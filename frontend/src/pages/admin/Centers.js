@@ -2,11 +2,71 @@ import React, { useState, useEffect } from 'react';
 import API from '../../services/api';
 import { Building2, PlusCircle, Trash2, Edit3, MapPin, Phone, X, Loader2 } from 'lucide-react';
 
+// Rwanda locations data
+const RWANDA_LOCATIONS = {
+  'Kigali': {
+    districts: ['Gasabo', 'Kicukiro', 'Nyarugenge']
+  },
+  'Northern Province': {
+    districts: ['Burera', 'Gakenke', 'Gicumbi', 'Musanze', 'Rulindo']
+  },
+  'Southern Province': {
+    districts: ['Gisagara', 'Huye', 'Kamonyi', 'Muhanga', 'Nyamagabe', 'Nyanza', 'Nyaruguru', 'Ruhango']
+  },
+  'Eastern Province': {
+    districts: ['Bugesera', 'Gatsibo', 'Kayonza', 'Kirehe', 'Ngoma', 'Nyagatare', 'Rwamagana']
+  },
+  'Western Province': {
+    districts: ['Karongi', 'Ngororero', 'Nyabihu', 'Nyamasheke', 'Rubavu', 'Rusizi', 'Rutsiro']
+  }
+};
+
+const SECTORS = {
+  // Kigali Sectors
+  'Gasabo': ['Remera', 'Kacyiru', 'Kimironko', 'Gisozi', 'Kinyinya', 'Ndera', 'Rusororo', 'Jali', 'Gatsata', 'Gikomero'],
+  'Kicukiro': ['Kanombe', 'Kicukiro', 'Gikondo', 'Niboye', 'Kagarama', 'Masaka', 'Gahanga', 'Kanyinya'],
+  'Nyarugenge': ['Nyarugenge', 'Muhima', 'Nyamirambo', 'Kiyovu', 'Gitega', 'Kimisagara', 'Rwezamenyo', 'Kabeza', 'Biryogo'],
+  // Northern Province
+  'Burera': ['Cyanika', 'Gahunga', 'Gatebe', 'Kagogo', 'Kinoni', 'Kinyababa', 'Rugarama', 'Rusagara', 'Rutare'],
+  'Gakenke': ['Buganza', 'Cyabingo', 'Gakenke', 'Janja', 'Kamubuga', 'Karambo', 'Kivuruga', 'Ruhondo', 'Rushashi'],
+  'Gicumbi': ['Bukure', 'Kageyo', 'Miyove', 'Mukarange', 'Munyaga', 'Mushaki', 'Nyarurama', 'Rubaya', 'Rwimi'],
+  'Musanze': ['Busogo', 'Gataraga', 'Kimanzi', 'Kinigi', 'Muhoza', 'Muko', 'Musanze', 'Nkotsi', 'Nyange', 'Remera'],
+  'Rulindo': ['Kisaro', 'Mbogo', 'Murambi', 'Ngoma', 'Ntarabana', 'Rutare', 'Rwerere', 'Shyorongi'],
+  // Southern Province
+  'Gisagara': ['Gikonko', 'Gishubi', 'Kansi', 'Kibilizi', 'Kigembe', 'Mamba', 'Muganza', 'Mugombwa', 'Mukingo', 'Sake'],
+  'Huye': ['Gishamvu', 'Huye', 'Karama', 'Kigoma', 'Kinazi', 'Maraba', 'Mbazi', 'Mukura', 'Ngoma', 'Ruhashya'],
+  'Kamonyi': ['Gacurabwenge', 'Karama', 'Kayenzi', 'Kayumbu', 'Mugina', 'Musambira', 'Ngamba', 'Nyamiyaga', 'Rugarika', 'Rukoma'],
+  'Muhanga': ['Cyeza', 'Kabacuzi', 'Kibangu', 'Kiyumba', 'Muhanga', 'Mushishiro', 'Nyabinoni', 'Nyarugenge', 'Rutovu'],
+  'Nyamagabe': ['Buruhukiro', 'Cyanika', 'Gasaka', 'Gatare', 'Kaduha', 'Kamegeri', 'Kibirizi', 'Kibumbwe', 'Kitabi', 'Mbazi'],
+  'Nyanza': ['Busasamana', 'Busoro', 'Cyabakamyi', 'Kibirizi', 'Kigoma', 'Mukingo', 'Muyira', 'Ntyazo', 'Nyagisozi', 'Rwabicuma'],
+  'Nyaruguru': ['Kibeho', 'Mata', 'Muganza', 'Munini', 'Ngera', 'Nyagisozi', 'Ruheru', 'Ruhuha'],
+  'Ruhango': ['Buhanda', 'Gikongoro', 'Kinazi', 'Mbuye', 'Mwendo', 'Ntongwe', 'Ruhango'],
+  // Eastern Province
+  'Bugesera': ['Gashora', 'Juru', 'Kamabuye', 'Ntarama', 'Mayange', 'Mareba', 'Nyamata', 'Rilima', 'Ruhuha'],
+  'Gatsibo': ['Gasange', 'Gatsibo', 'Gitoki', 'Kabarore', 'Kageyo', 'Kiramuruzi', 'Kiziguro', 'Muhura', 'Murambi', 'Ngarama'],
+  'Kayonza': ['Cabara', 'Gahini', 'Karema', 'Kayonza', 'Mukarange', 'Murama', 'Murundi', 'Mwiri', 'Ndego', 'Nyamirama'],
+  'Kirehe': ['Gahara', 'Gatore', 'Kigarama', 'Kigina', 'Kirehe', 'Mahama', 'Mpanga', 'Musaza', 'Nasho', 'Nyabubare'],
+  'Ngoma': ['Gashanda', 'Jarama', 'Karembo', 'Kazo', 'Mugesera', 'Murama', 'Mutenderi', 'Remera', 'Rukira', 'Sake'],
+  'Nyagatare': ['Gatunda', 'Kiyombe', 'Matimba', 'Mimuri', 'Mukama', 'Musheri', 'Nyagatare', 'Rukomo', 'Rwempasha', 'Rwimi'],
+  'Rwamagana': ['Fumbwe', 'Gahengeri', 'Gishari', 'Karenge', 'Kigabiro', 'Muhazi', 'Munyaga', 'Munyang', 'Nyakariro', 'Nyaruhene'],
+  // Western Province
+  'Karongi': ['Bwishyura', 'Gishyita', 'Gitesi', 'Mubuga', 'Murambi', 'Murundi', 'Mutuntu', 'Rubengera', 'Rugabano', 'Rutsiro'],
+  'Ngororero': ['Birenga', 'Gatwaro', 'Kabaya', 'Kageyo', 'Kavumu', 'Matyazo', 'Muhororo', 'Ndaro', 'Ngororero', 'Nyange'],
+  'Nyabihu': ['Bigogwe', 'Jenda', 'Jomba', 'Kabatwa', 'Karago', 'Kintobo', 'Mukamira', 'Muringa', 'Rambura', 'Rugera'],
+  'Nyamasheke': ['Bushekeri', 'Bushenge', 'Cyato', 'Gihombo', 'Kagano', 'Kanjongo', 'Karambi', 'Karengera', 'Kirimbi', 'Macuba'],
+  'Rubavu': ['Bugeshi', 'Busasamana', 'Cyanzarwe', 'Gisenyi', 'Kanama', 'Kanzenze', 'Mudende', 'Nyakiliba', 'Nyamyumba', 'Rubavu'],
+  'Rusizi': ['Bugarama', 'Butare', 'Bweyeye', 'Gashonga', 'Giheke', 'Gihundwe', 'Gitambi', 'Kamembe', 'Muganza', 'Mururu'],
+  'Rutsiro': ['Boneza', 'Gihango', 'Kigeyo', 'Kivumu', 'Manihira', 'Mukura', 'Murunda', 'Musasa', 'Rutsiro', 'Shangi']
+};
+
 const Centers = () => {
     const [centers, setCenters] = useState([]);
     const [name, setName] = useState('');
     const [location, setLocation] = useState('');
     const [phone, setPhone] = useState('');
+    const [province, setProvince] = useState('');
+    const [district, setDistrict] = useState('');
+    const [sector, setSector] = useState('');
 
     // State management for Editing Mode
     const [editingCenterId, setEditingCenterId] = useState(null);
@@ -14,6 +74,11 @@ const Centers = () => {
     // User Action Feedback Indicators
     const [feedback, setFeedback] = useState({ type: null, text: '' });
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // Computed options
+    const provinces = Object.keys(RWANDA_LOCATIONS);
+    const districts = province ? RWANDA_LOCATIONS[province]?.districts || [] : [];
+    const sectors = district ? SECTORS[district] || [] : [];
 
     useEffect(() => { 
         loadCenters(); 
@@ -35,9 +100,12 @@ const Centers = () => {
         e.preventDefault();
         setIsSubmitting(true);
         
+        // Combine location fields into a single string or keep as structured data
+        const fullLocation = [province, district, sector].filter(Boolean).join(' - ');
+        
         const centerData = { 
             center_name: name.trim(), 
-            location: location.trim(), 
+            location: fullLocation || location.trim(), 
             contact_phone: phone.trim() 
         };
 
@@ -80,6 +148,17 @@ const Centers = () => {
         setName(c.center_name);
         setLocation(c.location);
         setPhone(c.contact_phone);
+        
+        // Try to parse location if it contains province - district - sector format
+        const locationParts = c.location?.split(' - ');
+        if (locationParts && locationParts.length === 3) {
+            const [prov, dist, sect] = locationParts;
+            if (provinces.includes(prov)) {
+                setProvince(prov);
+                setDistrict(dist);
+                setSector(sect);
+            }
+        }
     };
 
     const clearForm = () => {
@@ -87,6 +166,22 @@ const Centers = () => {
         setName('');
         setLocation('');
         setPhone('');
+        setProvince('');
+        setDistrict('');
+        setSector('');
+    };
+
+    // Handle province change
+    const handleProvinceChange = (e) => {
+        setProvince(e.target.value);
+        setDistrict('');
+        setSector('');
+    };
+
+    // Handle district change
+    const handleDistrictChange = (e) => {
+        setDistrict(e.target.value);
+        setSector('');
     };
 
     return (
@@ -127,18 +222,65 @@ const Centers = () => {
                         />
                     </div>
 
-                    <div className="space-y-1.5">
+                    {/* Location Select Fields */}
+                    <div className="space-y-3">
                         <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
                             <MapPin className="h-3 w-3 text-slate-400" /> Location / Address
                         </label>
-                        <input 
-                            type="text" 
-                            value={location} 
-                            onChange={e => setLocation(e.target.value)} 
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition" 
-                            placeholder="e.g., Nyarugenge, Kigali" 
-                            required 
-                        />
+                        
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-3 gap-2">
+                            {/* Province Select */}
+                            <select
+                                value={province}
+                                onChange={handleProvinceChange}
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition"
+                            >
+                                <option value="">Select Province</option>
+                                {provinces.map(p => (
+                                    <option key={p} value={p}>{p}</option>
+                                ))}
+                            </select>
+
+                            {/* District Select */}
+                            <select
+                                value={district}
+                                onChange={handleDistrictChange}
+                                disabled={!province}
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <option value="">Select District</option>
+                                {districts.map(d => (
+                                    <option key={d} value={d}>{d}</option>
+                                ))}
+                            </select>
+
+                            {/* Sector Select */}
+                            <select
+                                value={sector}
+                                onChange={e => setSector(e.target.value)}
+                                disabled={!district}
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <option value="">Select Sector</option>
+                                {sectors.map(s => (
+                                    <option key={s} value={s}>{s}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Optional manual entry fallback */}
+                        <div className="mt-2">
+                            <input 
+                                type="text" 
+                                value={location} 
+                                onChange={e => setLocation(e.target.value)} 
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-green-500/20 focus:border-green-600 transition" 
+                                placeholder="Or enter full address manually..." 
+                            />
+                            <p className="text-[10px] text-slate-400 mt-1">
+                                {province && district && sector ? `Selected: ${province} - ${district} - ${sector}` : 'Select location from dropdowns or type manually'}
+                            </p>
+                        </div>
                     </div>
 
                     <div className="space-y-1.5">

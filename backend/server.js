@@ -77,31 +77,98 @@ app.post('/api/auth/register', async (req, res) => {
     }
 });
 
-// Login User
+
+// ==========================================
+// AUTH ROUTES - Login (YARI IBURA)
+// ==========================================
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+    }
+
     try {
+        // 1. Find user by email
         const [rows] = await db.execute('SELECT * FROM users WHERE email = ?', [email]);
-        if (rows.length === 0) return res.status(400).json({ error: 'Invalid credentials' });
+        if (rows.length === 0) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
 
         const user = rows[0];
+        
+        // 2. Verify password
         const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(400).json({ error: 'Invalid credentials' });
+        if (!isMatch) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
 
-        req.session.user = { id: user.user_id, fullname: user.fullname, role: user.role };
-        res.json({ message: 'Login successful', user: req.session.user });
+        // 3. Save session
+        req.session.user = { 
+            id: user.user_id, 
+            fullname: user.fullname, 
+            role: user.role,
+            email: user.email,
+            phone: user.phone
+        };
+
+        // 4. Return user data (without password)
+        res.json({ 
+            message: 'Login successful', 
+            user: {
+                id: user.user_id,
+                fullname: user.fullname,
+                email: user.email,
+                phone: user.phone,
+                role: user.role
+            }
+        });
+        
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('Login error:', err);
+        res.status(500).json({ error: 'Server error during login' });
     }
 });
+// ==========================================
+// RESET PASSWORD - Using token
+// ==========================================
+app.post('/api/auth/reset-password', async (req, res) => {
+    const { token, newPassword } = req.body;
 
-// Logout User
-app.post('/api/auth/logout', (req, res) => {
-    req.session.destroy(err => {
-        if (err) return res.status(500).json({ error: 'Could not log out' });
-        res.clearCookie('connect.sid');
-        res.json({ message: 'Logged out successfully' });
-    });
+    if (!token || !newPassword) {
+        return res.status(400).json({ error: 'Token and new password are required' });
+    }
+
+    if (newPassword.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    try {
+        // 1. Find user with valid token
+        const [user] = await db.execute(
+            'SELECT * FROM users WHERE reset_token = ? AND reset_token_expiry > NOW()',
+            [token]
+        );
+
+        if (user.length === 0) {
+            return res.status(400).json({ error: 'Invalid or expired token' });
+        }
+
+        // 2. Hash new password
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        // 3. Update password and clear token
+        await db.execute(
+            'UPDATE users SET password = ?, reset_token = NULL, reset_token_expiry = NULL WHERE user_id = ?',
+            [hashedPassword, user[0].user_id]
+        );
+
+        res.json({ message: 'Password reset successfully' });
+
+    } catch (error) {
+        console.error('Error resetting password:', error);
+        res.status(500).json({ error: 'Failed to reset password' });
+    }
 });
 
 
@@ -270,17 +337,12 @@ app.delete('/api/recycling-centers/:id', async (req, res) => {
 // ==========================================
 // 7. CRUD: WASTE REQUESTS
 // ==========================================
-// ==========================================
-// 7. CRUD: WASTE REQUESTS (KOSORA HANO)
-// ==========================================
-// 7. CRUD: WASTE REQUESTS - KOSORA HANO BURUNDU
 app.post('/api/waste-requests', async (req, res) => {
     const { resident_id, waste_type, description, image, location, status } = req.body;
     
     try {
         const userId = parseInt(resident_id, 10);
 
-        // 1. Gushaka resident_id muri table ya residents
         let [residentRows] = await db.execute(
             'SELECT resident_id FROM residents WHERE user_id = ?', 
             [userId]
@@ -288,18 +350,16 @@ app.post('/api/waste-requests', async (req, res) => {
 
         let actualResidentId;
 
-        // 2. NIBA UWO MUNTU NTAYO AFITE, MUHAMRE PROFILE AKO KANYA!
         if (residentRows.length === 0) {
             const [newResident] = await db.execute(
                 'INSERT INTO residents (user_id, address) VALUES (?, ?)',
-                [userId, location || 'Kigali, Rwanda'] // Ifata ya location ya request nka address ye
+                [userId, location || 'Kigali, Rwanda']
             );
             actualResidentId = newResident.insertId;
         } else {
             actualResidentId = residentRows[0].resident_id;
         }
 
-        // 3. Kwandika muri waste_requests nta nkomyi
         const finalImage = (image === null || image === undefined) ? '' : image;
         const [r] = await db.execute(
             'INSERT INTO waste_requests (resident_id, waste_type, description, image, location, request_date, status) VALUES (?,?,?,?,?, NOW(),?)',
@@ -345,6 +405,8 @@ app.delete('/api/waste-requests/:id', async (req, res) => {
         res.json({ message: 'Waste request dropped' });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+
 // ==========================================
 // 8. CRUD: COLLECTION SCHEDULES
 // ==========================================
@@ -418,124 +480,930 @@ app.delete('/api/vehicles/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ==========================================
+// ♻️ RECYCLED MATERIALS ENDPOINTS
+// ==========================================
 
-// ==========================================
-// 10. CRUD: RECYCLED MATERIALS
-// ==========================================
+// 1. KWANDIKA IMYANDA MINSHYA YAKIRIWE (POST)
+// Iyi ikoreshwa na Recycling Staff iyo agize imyanda itunganywa yakira
 app.post('/api/recycled-materials', async (req, res) => {
-    const { center_id, request_id, material_type, quantity, date_received } = req.body;
+    const { center_id, request_id, material_type, quantity } = req.body;
+
+    // Validation y'ibanze
+    if (!center_id || !material_type || !quantity) {
+        return res.status(400).json({ error: "Missing required fields: center_id, material_type, and quantity." });
+    }
+
     try {
-        const [r] = await db.execute(
-            'INSERT INTO recycled_materials (center_id, request_id, material_type, quantity, date_received) VALUES (?,?,?,?,?)',
-            [center_id, request_id, material_type, quantity, date_received]
+        const [result] = await db.execute(
+            `INSERT INTO recycled_materials (center_id, request_id, material_type, quantity) 
+             VALUES (?, ?, ?, ?)`,
+            [center_id, request_id || null, material_type, quantity]
         );
-        res.status(201).json({ material_id: r.insertId });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        
+        res.status(201).json({ 
+            message: 'Recycled material logged successfully!', 
+            materialId: result.insertId 
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
+// 2. KUZANA IMYANDA YOSE YANDIKITSE (GET)
+// Iyi izajya yerekana n'izina rya Center baturutsemo (JOIN)
 app.get('/api/recycled-materials', async (req, res) => {
     try {
-        const [rows] = await db.execute('SELECT * FROM recycled_materials');
+        const [rows] = await db.execute(`
+            SELECT rm.*, c.center_name 
+            FROM recycled_materials rm
+            JOIN centers c ON rm.center_id = c.center_id
+            ORDER BY rm.date_received DESC
+        `);
         res.json(rows);
-    } catch (err) { res.status(500).json({ error: err.message }); }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
+// 3. GUHINDURA AMACURU Y'IMYANDA (PUT)
 app.put('/api/recycled-materials/:id', async (req, res) => {
-    const { center_id, request_id, material_type, quantity, date_received } = req.body;
+    const { id } = req.params;
+    const { center_id, request_id, material_type, quantity } = req.body;
+    
     try {
         await db.execute(
-            'UPDATE recycled_materials SET center_id=?, request_id=?, material_type=?, quantity=?, date_received=? WHERE material_id=?',
-            [center_id, request_id, material_type, quantity, date_received, req.params.id]
+            `UPDATE recycled_materials 
+             SET center_id = ?, request_id = ?, material_type = ?, quantity = ? 
+             WHERE material_id = ?`,
+            [center_id, request_id || null, material_type, quantity, id]
         );
-        res.json({ message: 'Inventory update recorded' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        res.json({ message: 'Recycled material record updated successfully.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
+// 4. GUSIBA INYANDIKO (DELETE)
 app.delete('/api/recycled-materials/:id', async (req, res) => {
+    const { id } = req.params;
     try {
-        await db.execute('DELETE FROM recycled_materials WHERE material_id=?', [req.params.id]);
-        res.json({ message: 'Entry removed' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        await db.execute('DELETE FROM recycled_materials WHERE material_id = ?', [id]);
+        res.json({ message: 'Recycled material record deleted.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
+// 3. GUHINDURA INYANDIKO Y'IMYANDA YAKIRIWE (PUT / UPDATE)
+app.put('/api/recycled-materials/:id', async (req, res) => {
+    const { id } = req.params; // Ihawe material_id binyuze mu muhanda (URL)
+    const { center_id, request_id, material_type, quantity } = req.body;
 
-// ==========================================
-// 1. KOHEREZA NOTIFICATION (ADMIN BROADCAST CYANGWA INDIVIDUAL)
-// 1. KOHEREZA UBUTUMWA (POST /api/notifications)
-app.post('/api/notifications', (req, res) => {
-    // 💡 UMUTI: Niba database yawe yanga NULL, duha user_id numero ya 0 nk'amahitamo ya kabiri
-    const userId = req.body.user_id ? parseInt(req.body.user_id, 10) : 0; 
-    const title = req.body.title || '';
-    const message = req.body.message || '';
-    const status = req.body.status || 'active';
-    const targetRole = req.body.target_role ? req.body.target_role.toLowerCase() : 'all';
-    const isRead = 0;
+    // --- 1. VALIDATION SYSTEM ---
+    if (!center_id || !material_type || quantity === undefined) {
+        return res.status(400).json({ 
+            error: "Missing fields! center_id, material_type, and quantity are strictly required." 
+        });
+    }
 
-    const query = 'INSERT INTO notifications (user_id, title, message, status, created_at, target_role, is_read) VALUES (?, ?, ?, ?, NOW(), ?, ?)';
+    if (isNaN(quantity) || Number(quantity) <= 0) {
+        return res.status(400).json({ 
+            error: "Invalid input! Quantity must be a positive number greater than 0." 
+        });
+    }
 
-    // Gukoresha callback isanzwe (No promises)
-    db.query(query, [userId, title, message, status, targetRole, isRead], (err, result) => {
-        if (err) {
-            console.error('❌ SQL Error:', err);
-            // 💡 ICYITONDERWA: Iyi return ni yo ituma frontend imenya ko byanze, ikarekura loading!
-            return res.status(500).json({ 
-                error: 'Database rejected notification entry', 
-                details: err.message 
+    try {
+        // --- 2. EXECUTE DATABASE UPDATE ---
+        const [result] = await db.execute(
+            `UPDATE recycled_materials 
+             SET center_id = ?, request_id = ?, material_type = ?, quantity = ? 
+             WHERE material_id = ?`,
+            [center_id, request_id || null, material_type, quantity, id]
+        );
+
+        // --- 3. VERIFY IF RECORD EXISTED ---
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ 
+                error: `Update failed. Recycled material record with ID ${id} was not found.` 
+            });
+        }
+
+        res.json({ 
+            message: 'Recycled material log updated successfully!',
+            updatedId: id 
+        });
+
+    } catch (err) {
+        // Handle Foreign Key constraints failures (e.g., center_id doesn't exist)
+        if (err.code === 'ER_NO_REFERENCED_ROW_2') {
+            return res.status(400).json({ 
+                error: "Database Integrity Error: The provided center_id or request_id does not exist." 
+            });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// =========================================================================
+// 1. ADMIN ENDPOINT: Kohereza Notification ku mukoresha runaka cyangwa Bose
+// =========================================================================
+app.post('/api/notifications', async (req, res) => {
+    const { user_id, title, message } = req.body;
+
+    if (!title || !message) {
+        return res.status(400).json({ error: "Umutwe (title) n'Ubutumwa (message) bishyirwemo." });
+    }
+
+    try {
+        // Niba user_id ihari tuyishyiramo, niba idahari ihaba NULL (ireba bose)
+        await db.execute(
+            'INSERT INTO notifications (user_id, title, message, is_read, sender_id) VALUES (?, ?, ?, 0, NULL)',
+            [user_id || null, title, message]
+        );
+        res.status(201).json({ message: "Notification yoherejwe neza!" });
+    } catch (err) {
+        console.error("❌ Ikosa muri POST /api/notifications:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE endpoint - Delete a notification by ID
+app.delete('/api/notifications/:id', async (req, res) => {
+    const { id } = req.params;
+    
+    try {
+        // Check if notification exists first
+        const [existing] = await db.query(
+            'SELECT * FROM notifications WHERE notification_id = ?', 
+            [id]
+        );
+        
+        if (existing.length === 0) {
+            return res.status(404).json({ 
+                error: 'Notification not found',
+                details: `No notification found with ID: ${id}`
             });
         }
         
-        // 💡 ICYITONDERWA: Iyi return ni yo ibwira frontend ko byagenze neza!
-        return res.status(201).json({ 
-            message: 'Notification sent successfully!', 
-            notification_id: result.insertId 
-        });
-    });
-});
-// 2. GUKURURA NOTIFICATIONS Z'UMUNTU WINJIYE (BY USER_ID AND ROLE)
-app.get('/api/my-notifications', (req, res) => {
-    const userId = parseInt(req.query.user_id, 10);
-    const userRole = req.query.role ? req.query.role.toLowerCase() : '';
-
-    // Query ifata izandikiwe uwo muntu CYANGWA iz'itsinda rye CYANGWA iz'abantu bose ('all')
-    const query = 'SELECT * FROM notifications WHERE user_id = ? OR target_role = ? OR target_role = "all" ORDER BY created_at DESC';
-
-    db.query(query, [userId, userRole], (err, rows) => {
-        if (err) {
-            console.error('❌ SQL Error:', err);
-            return res.status(500).json({ error: 'Failed to fetch notifications' });
+        // Delete the notification
+        const [result] = await db.query(
+            'DELETE FROM notifications WHERE notification_id = ?', 
+            [id]
+        );
+        
+        if (result.affectedRows === 0) {
+            return res.status(500).json({ 
+                error: 'Failed to delete notification' 
+            });
         }
-        return res.status(200).json(rows);
-    });
+        
+        res.status(200).json({ 
+            message: 'Notification deleted successfully',
+            notification_id: id
+        });
+        
+    } catch (error) {
+        console.error('Error deleting notification:', error);
+        res.status(500).json({ 
+            error: 'Database error occurred while deleting notification',
+            details: error.message
+        });
+    }
 });
 
-app.put('/api/notifications/:id', async (req, res) => {
-    const { title, message, status } = req.body;
+// =========================================================================
+// 2. NEW OVERRIDE ROUTE: Iza Admin gusa (IYI IGOMBA KUZA JURU rya :userId)
+// =========================================================================
+app.get('/api/notifications/admin', async (req, res) => {
+    try {
+        // Admin izakozwe na Admin gusa (Aho sender_id ari NULL cyangwa 1)
+        const [rows] = await db.execute(
+            'SELECT * FROM notifications WHERE sender_id IS NULL OR sender_id = 1 ORDER BY created_at DESC' 
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("❌ Ikosa muri GET /notifications/admin:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// =========================================================================
+// 3. NEW OVERRIDE ROUTE: Iza Team gusa (IYI NAYO IGOMBA KUZA JURU rya :userId)
+// =========================================================================
+app.get('/api/notifications/team', async (req, res) => {
+    try {
+        // Izakozwe n'abandi bakozi (sender_id itari null kandi itari 1)
+        const [rows] = await db.execute(
+            'SELECT * FROM notifications WHERE sender_id IS NOT NULL AND sender_id != 1 ORDER BY created_at DESC'
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("❌ Ikosa muri GET /notifications/team:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// =========================================================================
+// 4. COLLECTOR ENDPOINT: Kuzana notifications z'umuntu winjiye (Dushingiye kuri user_id)
+// =========================================================================
+app.get('/api/notifications/user/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        // Twahinduye umuhanda twongeyeho /user/:userId kugira ngo Express itayivanga n'izindi
+        const [rows] = await db.execute(
+            'SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC',
+            [userId]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("❌ Ikosa muri GET /notifications/user/:userId:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// =========================================================================
+// 5. UPDATE ENDPOINT: Mark as Read
+// =========================================================================
+app.put('/api/notifications/read/:notificationId', async (req, res) => {
+    const { notificationId } = req.params;
+
     try {
         await db.execute(
-            'UPDATE notifications SET title=?, message=?, status=? WHERE notification_id=?',
-            [title, message, status, req.params.id]
+            'UPDATE notifications SET is_read = 1 WHERE notification_id = ?',
+            [notificationId]
         );
-        res.json({ message: 'Notification changed' });
-    } catch (err) { res.status(500).json({ error: err.message }); }
+        res.json({ message: "Notification marked as read." });
+    } catch (err) {
+        console.error("❌ Ikosa muri PUT /notifications/read:", err.message);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// 4. GUSIBA NOTIFICATION (DELETE)
-app.delete('/api/notifications/:id', (req, res) => {
-    const notificationId = req.params.id;
+// =========================================================================
+// 6. GET ALL NOTIFICATIONS (FOR ADMIN/DASHBOARD VIEW)
+// =========================================================================
+app.get('/api/notifications', async (req, res) => {
+    try {
+        // Nkoze SELECT * ihabnye neza cyangwa nshoramo inkingi zose zizwi
+        const query = `SELECT * FROM notifications ORDER BY notification_id DESC`;
+        const [rows] = await db.execute(query);
+        res.status(200).json(rows);
+    } catch (err) {
+        console.error("❌ Ikosa ryo kuzana zose:", err.message);
+        res.status(500).json({ error: "Kuzana amakuru byanze", details: err.message });
+    }
+});
 
-    const query = 'DELETE FROM notifications WHERE notification_id = ?';
 
-    db.query(query, [notificationId], (err, result) => {
-        if (err) {
-            console.error('❌ SQL Error:', err);
-            return res.status(500).json({ error: 'Failed to delete notification' });
+
+
+// ==========================================
+// NOTIFICATION SYSTEM FOR COLLECTORS & ADMIN
+// ==========================================
+
+// 1. KOHEREZA NOTIFICATION: Collector ayoherereza abandi bakozi
+app.post('/api/collector-notifications', async (req, res) => {
+    const { sender_id, title, message } = req.body; 
+
+    if (!sender_id || !title || !message) {
+        return res.status(400).json({ error: "Byose bikenewe: sender_id, title, na message." });
+    }
+
+    try {
+        // Niba muri database yawe column yitwa id cyangwa notification_id, reba niba is_read ifite default 0
+        // Niba database yawe isaba user_id (NOT NULL), dushobora kuyihaho default nka 0 cyangwa NULL
+        await db.execute(
+            'INSERT INTO notifications (sender_id, title, message, is_read) VALUES (?, ?, ?, 0)',
+            [sender_id, title, message]
+        );
+        res.status(201).json({ message: "Notification yoherejwe neza!" });
+    } catch (err) {
+        console.error("🚨 SQL ERROR MURI POST NOTIFICATION:", err.message); // Ibi bizakwerekera ikibazo nya cyo muri terminal ya node
+        res.status(500).json({ error: "Database error: " + err.message });
+    }
+});
+
+// 2. [YARI IBURA - FIXED] KUZANA IZO UYU MUKOZI YOHEREJE GUSA
+app.get('/api/my-sent-notifications/:senderId', async (req, res) => {
+    const { senderId } = req.params;
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM notifications WHERE sender_id = ? ORDER BY created_at DESC',
+            [senderId]
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("🚨 SQL ERROR MURI GET MY SENT:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 3. KUZANA IZA ADMIN: Zireba abakozi bose (sender_id ni NULL cyangwa ni 1)
+app.get('/api/notifications/admin', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM notifications WHERE sender_id IS NULL OR sender_id = 1 ORDER BY created_at DESC' 
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("🚨 SQL ERROR MURI GET ADMIN NOTIF:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 4. KUZANA IZA TEAM: Izakozwe n'abandi ba Collectors cyangwa Staff
+app.get('/api/notifications/team', async (req, res) => {
+    try {
+        const [rows] = await db.execute(
+            'SELECT * FROM notifications WHERE sender_id IS NOT NULL AND sender_id != 1 ORDER BY created_at DESC'
+        );
+        res.json(rows);
+    } catch (err) {
+        console.error("🚨 SQL ERROR MURI GET TEAM NOTIF:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 5. GUHINDURA (UPDATE): Guhindura message cyangwa title
+app.put('/api/notifications/update/:notificationId', async (req, res) => {
+    const { notificationId } = req.params;
+    const { title, message } = req.body;
+    try {
+        // NITONGARE: Reba niba column yitwa 'notification_id' cyangwa 'id' muri database yawe!
+        await db.execute(
+            'UPDATE notifications SET title = ?, message = ? WHERE notification_id = ?',
+            [title, message, notificationId]
+        );
+        res.json({ message: "Notification yahinduwe neza." });
+    } catch (err) {
+        console.error("🚨 SQL ERROR MURI UPDATE:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 6. GUSIBA (DELETE): Gusiba notification burundu
+app.delete('/api/notifications/delete/:notificationId', async (req, res) => {
+    const { notificationId } = req.params;
+    try {
+        // NITONGARE: Reba niba column yitwa 'notification_id' cyangwa 'id'
+        await db.execute('DELETE FROM notifications WHERE notification_id = ?', [notificationId]);
+        res.json({ message: "Notification yasibwe neza." });
+    } catch (err) {
+        console.error("🚨 SQL ERROR MURI DELETE:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 10. REPORT ENDPOINTS
+// ==========================================
+
+// ==========================================
+// 10.1 DAILY REPORT
+// ==========================================
+app.get('/api/reports/daily', async (req, res) => {
+    const { date } = req.query; // Format: YYYY-MM-DD
+    
+    try {
+        const reportDate = date || new Date().toISOString().split('T')[0];
+        
+        // Get waste requests for the day
+        const [requests] = await db.execute(
+            `SELECT 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+            FROM waste_requests 
+            WHERE DATE(request_date) = ?`,
+            [reportDate]
+        );
+        
+        // Get waste types breakdown
+        const [wasteTypes] = await db.execute(
+            `SELECT waste_type, COUNT(*) as count 
+            FROM waste_requests 
+            WHERE DATE(request_date) = ?
+            GROUP BY waste_type`,
+            [reportDate]
+        );
+        
+        // Get top locations
+        const [locations] = await db.execute(
+            `SELECT location, COUNT(*) as count 
+            FROM waste_requests 
+            WHERE DATE(request_date) = ?
+            GROUP BY location 
+            ORDER BY count DESC 
+            LIMIT 5`,
+            [reportDate]
+        );
+        
+        // Get collection status
+        const [collections] = await db.execute(
+            `SELECT COUNT(*) as total_collections 
+            FROM collection_schedules 
+            WHERE DATE(collection_date) = ?`,
+            [reportDate]
+        );
+        
+        res.json({
+            report_type: 'daily',
+            date: reportDate,
+            summary: {
+                total_requests: requests[0]?.total_requests || 0,
+                pending: requests[0]?.pending || 0,
+                approved: requests[0]?.approved || 0,
+                completed: requests[0]?.completed || 0,
+                cancelled: requests[0]?.cancelled || 0,
+                total_collections: collections[0]?.total_collections || 0
+            },
+            waste_types: wasteTypes,
+            top_locations: locations,
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error('Error generating daily report:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 10.2 WEEKLY REPORT
+// ==========================================
+app.get('/api/reports/weekly', async (req, res) => {
+    const { week_start } = req.query; // Format: YYYY-MM-DD
+    
+    try {
+        let startDate;
+        if (week_start) {
+            startDate = new Date(week_start);
+        } else {
+            startDate = new Date();
+            startDate.setDate(startDate.getDate() - startDate.getDay());
         }
-        return res.status(200).json({ message: 'Notification dropped from registers.' });
-    });
+        
+        const endDate = new Date(startDate);
+        endDate.setDate(endDate.getDate() + 6);
+        
+        const startStr = startDate.toISOString().split('T')[0];
+        const endStr = endDate.toISOString().split('T')[0];
+        
+        // Daily breakdown for the week
+        const [dailyBreakdown] = await db.execute(
+            `SELECT 
+                DATE(request_date) as date,
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY DATE(request_date)
+            ORDER BY DATE(request_date)`,
+            [startStr, endStr]
+        );
+        
+        // Weekly summary
+        const [summary] = await db.execute(
+            `SELECT 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?`,
+            [startStr, endStr]
+        );
+        
+        // Waste type breakdown for week
+        const [wasteTypes] = await db.execute(
+            `SELECT waste_type, COUNT(*) as count 
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY waste_type
+            ORDER BY count DESC`,
+            [startStr, endStr]
+        );
+        
+        // Top collectors
+        const [topCollectors] = await db.execute(
+            `SELECT 
+                u.fullname,
+                COUNT(cs.collector_id) as collections
+            FROM collection_schedules cs
+            JOIN collectors c ON cs.collector_id = c.collector_id
+            JOIN users u ON c.user_id = u.user_id
+            WHERE DATE(cs.collection_date) BETWEEN ? AND ?
+            GROUP BY cs.collector_id
+            ORDER BY collections DESC
+            LIMIT 5`,
+            [startStr, endStr]
+        );
+        
+        res.json({
+            report_type: 'weekly',
+            week_start: startStr,
+            week_end: endStr,
+            summary: {
+                total_requests: summary[0]?.total_requests || 0,
+                pending: summary[0]?.pending || 0,
+                approved: summary[0]?.approved || 0,
+                completed: summary[0]?.completed || 0,
+                cancelled: summary[0]?.cancelled || 0
+            },
+            daily_breakdown: dailyBreakdown,
+            waste_types: wasteTypes,
+            top_collectors: topCollectors,
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error('Error generating weekly report:', err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
+// ==========================================
+// 10.3 MONTHLY REPORT
+// ==========================================
+app.get('/api/reports/monthly', async (req, res) => {
+    const { year, month } = req.query;
+    
+    try {
+        const currentDate = new Date();
+        const reportYear = parseInt(year) || currentDate.getFullYear();
+        const reportMonth = parseInt(month) || currentDate.getMonth() + 1;
+        
+        const startDate = `${reportYear}-${String(reportMonth).padStart(2, '0')}-01`;
+        const endDate = new Date(reportYear, reportMonth, 0).toISOString().split('T')[0];
+        
+        // Monthly summary
+        const [summary] = await db.execute(
+            `SELECT 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?`,
+            [startDate, endDate]
+        );
+        
+        // Weekly breakdown
+        const [weeklyBreakdown] = await db.execute(
+            `SELECT 
+                WEEK(request_date, 1) as week_number,
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY WEEK(request_date, 1)
+            ORDER BY week_number`,
+            [startDate, endDate]
+        );
+        
+        // Waste type summary
+        const [wasteTypes] = await db.execute(
+            `SELECT waste_type, COUNT(*) as count 
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY waste_type
+            ORDER BY count DESC`,
+            [startDate, endDate]
+        );
+        
+        // Location performance
+        const [locations] = await db.execute(
+            `SELECT 
+                location, 
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY location
+            ORDER BY total DESC
+            LIMIT 5`,
+            [startDate, endDate]
+        );
+        
+        // Collector performance
+        const [collectors] = await db.execute(
+            `SELECT 
+                u.fullname,
+                COUNT(cs.collector_id) as total_collections,
+                COUNT(DISTINCT DATE(cs.collection_date)) as active_days
+            FROM collection_schedules cs
+            JOIN collectors c ON cs.collector_id = c.collector_id
+            JOIN users u ON c.user_id = u.user_id
+            WHERE DATE(cs.collection_date) BETWEEN ? AND ?
+            GROUP BY cs.collector_id
+            ORDER BY total_collections DESC`,
+            [startDate, endDate]
+        );
+        
+        // Center performance
+        const [centers] = await db.execute(
+            `SELECT 
+                rc.center_name,
+                COUNT(rm.material_id) as total_materials,
+                SUM(rm.quantity) as total_quantity
+            FROM recycled_materials rm
+            JOIN recycling_centers rc ON rm.center_id = rc.center_id
+            WHERE DATE(rm.date_received) BETWEEN ? AND ?
+            GROUP BY rm.center_id
+            ORDER BY total_quantity DESC`,
+            [startDate, endDate]
+        );
+        
+        res.json({
+            report_type: 'monthly',
+            month: `${reportYear}-${String(reportMonth).padStart(2, '0')}`,
+            summary: {
+                total_requests: summary[0]?.total_requests || 0,
+                pending: summary[0]?.pending || 0,
+                approved: summary[0]?.approved || 0,
+                completed: summary[0]?.completed || 0,
+                cancelled: summary[0]?.cancelled || 0
+            },
+            weekly_breakdown: weeklyBreakdown,
+            waste_types: wasteTypes,
+            top_locations: locations,
+            collector_performance: collectors,
+            center_performance: centers,
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error('Error generating monthly report:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 
+// ==========================================
+// 10.4 YEARLY REPORT
+// ==========================================
+app.get('/api/reports/yearly', async (req, res) => {
+    const { year } = req.query;
+    
+    try {
+        const currentDate = new Date();
+        const reportYear = parseInt(year) || currentDate.getFullYear();
+        
+        const startDate = `${reportYear}-01-01`;
+        const endDate = `${reportYear}-12-31`;
+        
+        // Yearly summary
+        const [summary] = await db.execute(
+            `SELECT 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?`,
+            [startDate, endDate]
+        );
+        
+        // Monthly breakdown
+        const [monthlyBreakdown] = await db.execute(
+            `SELECT 
+                MONTH(request_date) as month,
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY MONTH(request_date)
+            ORDER BY month`,
+            [startDate, endDate]
+        );
+        
+        // Waste type distribution
+        const [wasteTypes] = await db.execute(
+            `SELECT waste_type, COUNT(*) as count 
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY waste_type
+            ORDER BY count DESC`,
+            [startDate, endDate]
+        );
+        
+        // Monthly collection trends
+        const [collectionTrends] = await db.execute(
+            `SELECT 
+                MONTH(collection_date) as month,
+                COUNT(*) as collections
+            FROM collection_schedules 
+            WHERE DATE(collection_date) BETWEEN ? AND ?
+            GROUP BY MONTH(collection_date)
+            ORDER BY month`,
+            [startDate, endDate]
+        );
+        
+        // Top performing centers
+        const [topCenters] = await db.execute(
+            `SELECT 
+                rc.center_name,
+                COUNT(rm.material_id) as materials_processed,
+                SUM(rm.quantity) as total_quantity
+            FROM recycled_materials rm
+            JOIN recycling_centers rc ON rm.center_id = rc.center_id
+            WHERE DATE(rm.date_received) BETWEEN ? AND ?
+            GROUP BY rm.center_id
+            ORDER BY total_quantity DESC
+            LIMIT 5`,
+            [startDate, endDate]
+        );
+        
+        // User growth
+        const [userGrowth] = await db.execute(
+            `SELECT 
+                MONTH(created_at) as month,
+                COUNT(*) as new_users
+            FROM users 
+            WHERE DATE(created_at) BETWEEN ? AND ?
+            GROUP BY MONTH(created_at)
+            ORDER BY month`,
+            [startDate, endDate]
+        );
+        
+        // Completion rate by month
+        const [completionRate] = await db.execute(
+            `SELECT 
+                MONTH(request_date) as month,
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_count,
+                ROUND((SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) / COUNT(*)) * 100, 2) as completion_rate
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?
+            GROUP BY MONTH(request_date)
+            ORDER BY month`,
+            [startDate, endDate]
+        );
+        
+        res.json({
+            report_type: 'yearly',
+            year: reportYear,
+            summary: {
+                total_requests: summary[0]?.total_requests || 0,
+                pending: summary[0]?.pending || 0,
+                approved: summary[0]?.approved || 0,
+                completed: summary[0]?.completed || 0,
+                cancelled: summary[0]?.cancelled || 0,
+                total_collections: collectionTrends.reduce((sum, item) => sum + item.collections, 0)
+            },
+            monthly_breakdown: monthlyBreakdown,
+            waste_types: wasteTypes,
+            collection_trends: collectionTrends,
+            top_centers: topCenters,
+            user_growth: userGrowth,
+            completion_rate: completionRate,
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error('Error generating yearly report:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 10.5 CUSTOM DATE RANGE REPORT
+// ==========================================
+app.get('/api/reports/custom', async (req, res) => {
+    const { start_date, end_date } = req.query;
+    
+    if (!start_date || !end_date) {
+        return res.status(400).json({ error: 'start_date and end_date are required' });
+    }
+    
+    try {
+        // Summary
+        const [summary] = await db.execute(
+            `SELECT 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as approved,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled
+            FROM waste_requests 
+            WHERE DATE(request_date) BETWEEN ? AND ?`,
+            [start_date, end_date]
+        );
+        
+        // Full data export
+        const [requests] = await db.execute(
+            `SELECT 
+                wr.*,
+                u.fullname as resident_name,
+                u.email as resident_email,
+                rc.center_name as assigned_center
+            FROM waste_requests wr
+            LEFT JOIN residents r ON wr.resident_id = r.resident_id
+            LEFT JOIN users u ON r.user_id = u.user_id
+            LEFT JOIN collection_schedules cs ON wr.request_id = cs.request_id
+            LEFT JOIN recycling_centers rc ON cs.collector_id = rc.center_id
+            WHERE DATE(wr.request_date) BETWEEN ? AND ?
+            ORDER BY wr.request_date DESC`,
+            [start_date, end_date]
+        );
+        
+        res.json({
+            report_type: 'custom',
+            start_date: start_date,
+            end_date: end_date,
+            summary: {
+                total_requests: summary[0]?.total_requests || 0,
+                pending: summary[0]?.pending || 0,
+                approved: summary[0]?.approved || 0,
+                completed: summary[0]?.completed || 0,
+                cancelled: summary[0]?.cancelled || 0
+            },
+            requests: requests,
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error('Error generating custom report:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ==========================================
+// 10.6 DASHBOARD SUMMARY (Real-time)
+// ==========================================
+app.get('/api/reports/dashboard', async (req, res) => {
+    try {
+        // Today's stats
+        const today = new Date().toISOString().split('T')[0];
+        
+        const [todaySummary] = await db.execute(
+            `SELECT 
+                COUNT(*) as today_requests,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as today_pending
+            FROM waste_requests 
+            WHERE DATE(request_date) = ?`,
+            [today]
+        );
+        
+        // Overall stats
+        const [overall] = await db.execute(
+            `SELECT 
+                COUNT(*) as total_requests,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as total_pending,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as total_completed
+            FROM waste_requests`
+        );
+        
+        // Recent activity (last 10 requests)
+        const [recent] = await db.execute(
+            `SELECT 
+                wr.*,
+                u.fullname as resident_name
+            FROM waste_requests wr
+            LEFT JOIN residents r ON wr.resident_id = r.resident_id
+            LEFT JOIN users u ON r.user_id = u.user_id
+            ORDER BY wr.request_date DESC
+            LIMIT 10`
+        );
+        
+        // Collector availability
+        const [collectors] = await db.execute(
+            `SELECT 
+                COUNT(*) as total_collectors,
+                SUM(CASE WHEN status = 'available' THEN 1 ELSE 0 END) as available_collectors
+            FROM collectors`
+        );
+        
+        res.json({
+            today: {
+                requests: todaySummary[0]?.today_requests || 0,
+                pending: todaySummary[0]?.today_pending || 0
+            },
+            overall: {
+                total_requests: overall[0]?.total_requests || 0,
+                pending: overall[0]?.total_pending || 0,
+                completed: overall[0]?.total_completed || 0
+            },
+            collectors: {
+                total: collectors[0]?.total_collectors || 0,
+                available: collectors[0]?.available_collectors || 0
+            },
+            recent_activity: recent,
+            generated_at: new Date().toISOString()
+        });
+        
+    } catch (err) {
+        console.error('Error generating dashboard summary:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
 // --- SERVER INITIALIZATION ---
 app.listen(PORT, () => {
-    console.log(`server is running  on port ${PORT}`);
+    console.log(`🚀 Server is running on port ${PORT}`);
 });

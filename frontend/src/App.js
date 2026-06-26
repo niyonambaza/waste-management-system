@@ -2,10 +2,10 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/authcontext';
 
-// --- KOSORA INZIRA ZA COMPONENTS BITWE IYO ZIFITE (.js) KURI FOLDER NAME ---
-import ProtectRouter from './components.js/ProtectRouter'; // <<— Yahindutse .js dushingiye kuri structure yawe
-import Navbar from './components.js/Navbar';               // <<— Yahindutse .js dushingiye kuri structure yawe
-import Sidebar from './components.js/Sidebar';             // <<— Yahindutse .js dushingiye kuri structure yawe
+// --- FIXED COMPONENT FILE PATHS BASED ON YOUR STRUCTURE ---
+import ProtectRouter from './components.js/ProtectRouter'; 
+import Navbar from './components.js/Navbar';               
+import Sidebar from './components.js/Sidebar';             
 
 // Auth Pages
 import Login from './pages/auth/Login';
@@ -13,9 +13,9 @@ import CreateAccount from './pages/auth/CreateAccount';
 
 // Admin Pages
 import AdminDashboard from './pages/admin/Dashboard';
-import Users from './pages/admin/Users';
+import UserManagementPage from './pages/admin/UserManagementPage';
 import Vehicles from './pages/admin/Vehicles';
-import Request from './pages/admin/Request'; // <<— Twakuyeho 's' kuko ari Request.js iri muri folder yawe
+import Request from './pages/admin/Request'; 
 import Centers from './pages/admin/Centers';
 import Collectors from './pages/admin/Collectors';
 import Materials from './pages/admin/Materials';
@@ -30,8 +30,9 @@ import ResidentDashboard from './pages/resident/Dashboard';
 import CreateRequest from './pages/resident/CreateRequest';
 import MyRequest from './pages/resident/MyRequest';
 import ResidentNotification from './pages/resident/Notification';
+import ResidentSetting from './pages/resident/Setting';
 
-// Collector Pages — Twahinduye hano twongeraho .js kuri folder name ya collectors.js
+// Collector Pages - FIXED: Use collectors.js (with .js)
 import CollectorDashboard from './pages/collectors.js/Dashboard';
 import AssignedRequest from './pages/collectors.js/AssignedRequest';
 import CollectorNotification from './pages/collectors.js/Notification';
@@ -47,17 +48,17 @@ function App() {
         <AuthProvider>
             <Router>
                 <div className="min-h-screen flex flex-col bg-gray-50 text-gray-900 font-sans">
-                    {/* Navbar ihoraho hejuru */}
+                    {/* Global Top Navbar */}
                     <Navbar />
                     
                     <div className="flex flex-1">
-                        {/* Sidebar itandukanya amapage ku muntu winjiye */}
+                        {/* Dynamic Role Sidebar */}
                         <Sidebar />
                         
-                        {/* Igice gikururirwamo amapage yose (Main Content) */}
+                        {/* Main Page Viewports */}
                         <main className="flex-1 p-4 sm:p-6 lg:p-8">
                             <Routes>
-                                {/* Ama-Routes Afunguye kuri Bose */}
+                                {/* Public Access Points */}
                                 <Route path="/auth/login" element={<Login />} />
                                 <Route path="/auth/register" element={<CreateAccount />} />
 
@@ -66,13 +67,13 @@ function App() {
                                     <ProtectRouter allowedRoles={['admin']}><AdminDashboard /></ProtectRouter>
                                 } />
                                 <Route path="/admin/users" element={
-                                    <ProtectRouter allowedRoles={['admin']}><Users /></ProtectRouter>
+                                    <ProtectRouter allowedRoles={['admin']}><UserManagementPage /></ProtectRouter>
                                 } />
                                 <Route path="/admin/vehicles" element={
                                     <ProtectRouter allowedRoles={['admin']}><Vehicles /></ProtectRouter>
                                 } />
                                 <Route path="/admin/requests" element={
-                                    <ProtectRouter allowedRoles={['admin']}><Request /></ProtectRouter> // <<— Hano habaye <Request /> mu kigwi cya <Requests />
+                                    <ProtectRouter allowedRoles={['admin']}><Request /></ProtectRouter> 
                                 } />
                                 <Route path="/admin/centers" element={
                                     <ProtectRouter allowedRoles={['admin']}><Centers /></ProtectRouter>
@@ -96,7 +97,9 @@ function App() {
                                     <ProtectRouter allowedRoles={['admin']}><Schedule /></ProtectRouter>
                                 } />
                                 <Route path="/admin/staff" element={
-                                    <ProtectRouter allowedRoles={['admin']}><Staff /></ProtectRouter>
+                                    <ProtectRouter allowedRoles={['admin', 'staff', 'recycling_staff']}>
+                                        <Staff />
+                                    </ProtectRouter>
                                 } />
 
                                 {/* --- RESIDENT PANEL ROUTES --- */}
@@ -111,6 +114,9 @@ function App() {
                                 } />
                                 <Route path="/resident/notifications" element={
                                     <ProtectRouter allowedRoles={['resident']}><ResidentNotification /></ProtectRouter>
+                                } />
+                                <Route path="/resident/setting" element={
+                                    <ProtectRouter allowedRoles={['resident']}><ResidentSetting /></ProtectRouter>
                                 } />
 
                                 {/* --- COLLECTOR PANEL ROUTES --- */}
@@ -129,16 +135,16 @@ function App() {
 
                                 {/* --- RECYCLING STAFF ROUTES --- */}
                                 <Route path="/staff/dashboard" element={
-                                    <ProtectRouter allowedRoles={['staff']}><StaffDashboard /></ProtectRouter>
+                                    <ProtectRouter allowedRoles={['staff', 'recycling_staff']}><StaffDashboard /></ProtectRouter>
                                 } />
                                 <Route path="/staff/material" element={
-                                    <ProtectRouter allowedRoles={['staff']}><StaffMaterial /></ProtectRouter>
+                                    <ProtectRouter allowedRoles={['staff', 'recycling_staff']}><StaffMaterial /></ProtectRouter>
                                 } />
                                 <Route path="/staff/notifications" element={
-                                    <ProtectRouter allowedRoles={['staff']}><StaffNotification /></ProtectRouter>
+                                    <ProtectRouter allowedRoles={['staff', 'recycling_staff']}><StaffNotification /></ProtectRouter>
                                 } />
 
-                                {/* Guhindura inzira mu gihe anditse itariyo */}
+                                {/* Fallback route redirection */}
                                 <Route path="*" element={<Navigate to="/auth/login" replace />} />
                             </Routes>
                         </main>
